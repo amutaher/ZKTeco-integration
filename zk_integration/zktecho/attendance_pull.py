@@ -1,5 +1,5 @@
+"""ZKTeco attendance pull"""
 
-""" ZKTeco attendance pull """
 import frappe
 from zk import ZK
 from datetime import datetime
@@ -69,7 +69,10 @@ def connect_to_device(device_ip, device_port, device_password):
         conn.test_voice(index=10)
         return conn
     except Exception as e:
-        frappe.log_error(f"Failed to connect to device {device_ip}: {str(e)}", "Device Connection Error")  # noqa
+        frappe.log_error(
+            f"Failed to connect to device {device_ip}: {str(e)}",
+            "Device Connection Error",
+        )  # noqa
         return None
     finally:
         if conn:
@@ -136,7 +139,7 @@ def retrieving_attendance(
     device_doc_name,
 ):
     """
-    Retrieves attendance records from a ZK device, processes the data, and 
+    Retrieves attendance records from a ZK device, processes the data, and
     updates the corresponding records in the system.
 
     Parameters:
@@ -154,7 +157,9 @@ def retrieving_attendance(
     record = frappe.get_doc("Attendance Sync", record_name)
     device_doc = frappe.get_doc("Attendance Devices", device_doc_name)
     record.db_set("status", "In-Progress")
-    
+    device_location_doc = None
+    if device_doc.device_location:
+        device_location_doc = frappe.get_doc("Location", device_doc.device_location)  # noqa
     # Initiate connection to the device
     zk = ZK(
         device_ip,
@@ -173,7 +178,7 @@ def retrieving_attendance(
         conn = zk.connect()
         all_logs = conn.get_attendance()
         users = conn.get_users()  # Get user list from the device
-        
+
         # Create a dictionary to map UID to user information from the device
         user_mapping = {user.uid: user.name for user in users}
         print(user_mapping)
@@ -204,15 +209,22 @@ def retrieving_attendance(
                         check_in.time = formatted_time
                         check_in.log_type = log_type
                         check_in.attendance_device_id = log.user_id
+                        check_in.longitude = device_location_doc.longitude
+                        check_in.latitude = device_location_doc.latitude
+
                         new_checkins.append(check_in)
                     else:
                         # Add to the duplicate entries set
-                        employee_name = frappe.get_value("Employee", employee, "employee_name")  # noqa
+                        employee_name = frappe.get_value(
+                            "Employee", employee, "employee_name"
+                        )  # noqa
                         duplicate_entries.add((employee, employee_name))
 
                 else:
                     # If employee is missing, try to find them in the device user list  # noqa
-                    device_user_name = user_mapping.get(int(log.user_id), "Name Not in Device")  # noqa
+                    device_user_name = user_mapping.get(
+                        int(log.user_id), "Name Not in Device"
+                    )  # noqa
                     missing_employees.add((log.user_id, device_user_name))
 
         # Insert new check-ins in bulk
@@ -229,7 +241,9 @@ def retrieving_attendance(
         record.db_set("status", "Completed")
         record.db_set("last_sync", frappe.utils.now_datetime())
         device_doc.db_set("last_sync", frappe.utils.now_datetime())
-        record.db_set("latest_remarks", html_report)  # Save remarks HTML in a custom field for logs  # noqa
+        record.db_set(
+            "latest_remarks", html_report
+        )  # Save remarks HTML in a custom field for logs  # noqa
         device_doc.db_set("sync_status", "Successful")
         record.notify_update()
         device_doc.notify_update()
@@ -248,11 +262,11 @@ def retrieving_attendance(
 def generate_html_report(duplicate_entries, missing_employees):
     """
     Generate HTML content for the remarks, listing duplicate entries and missing employees with totals.
-    
+
     Args:
         duplicate_entries (set): A set of tuples containing employee ID and name for duplicate entries.
         missing_employees (set): A set of tuples containing user ID and employee name for missing employees.
-    
+
     Returns:
         str: The HTML content for the remarks.
     """  # noqa
@@ -266,7 +280,9 @@ def generate_html_report(duplicate_entries, missing_employees):
         html += "</ul>"
 
     if missing_employees:
-        html += f"<h4>Missing Employee User IDs ({len(missing_employees)} Total)</h4><ul>"  # noqa
+        html += (
+            f"<h4>Missing Employee User IDs ({len(missing_employees)} Total)</h4><ul>"  # noqa
+        )
         for user_id, emp_name in missing_employees:
             html += f"<li>User ID: {user_id}, Employee Name: {emp_name}</li>"
         html += "</ul>"
